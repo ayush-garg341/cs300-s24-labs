@@ -77,13 +77,23 @@ void kernel(const char* command) {
         }
     }
 
+    copy_mappings(kernel_pagetable_copy, kernel_pagetable);
+
     // Set up process descriptors.
     for (pid_t i = 0; i < NPROC; i++) {
         ptable[i].pid = i;
         ptable[i].state = P_FREE;
     }
 
-    console_printf("WeensyOS has booted, but there are no processes running!\n");
+    // console_printf("WeensyOS has booted, but there are no processes running!\n");
+    process_setup(1, "allocator");
+    process_setup(2, "allocator2");
+    process_setup(3, "allocator3");
+    process_setup(4, "allocator4");
+    run(&ptable[1]);
+    run(&ptable[2]);
+    run(&ptable[3]);
+    run(&ptable[4]);
     while (true) {
         check_keyboard();
     }
@@ -384,7 +394,7 @@ void run(proc* p) {
 void memshow() {
     static unsigned last_ticks = 0;
     static int showing = 0;
-    static int show_virtual = 0;
+    static int show_virtual = 1;
 
     // switch to a new process every 0.25 sec
     if (last_ticks == 0 || ticks - last_ticks >= HZ / 2) {
@@ -404,4 +414,20 @@ void memshow() {
 
     extern void console_memviewer(proc* vmp, int show_virtual);
     console_memviewer(p, show_virtual);
+}
+
+void copy_mappings(x86_64_pagetable *dst, x86_64_pagetable* src)
+{
+    for (vmiter it(src); it.va() < MEMSIZE_VIRTUAL; it += PAGESIZE) {
+        log_printf("VA %p maps to PA %p with PERMS %p %p %p\n", it.va(), it.pa(), it.present(), it.writable(), it.user());
+        uintptr_t va = it.va();
+        uint64_t pa = it.pa();
+        uint64_t perm = it.perm();
+
+        int r = vmiter(dst, va).try_map(pa, perm);
+        if(r == -1)
+        {
+          log_printf("Mapping failed\n");
+        }
+    }
 }
