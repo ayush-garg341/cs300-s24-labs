@@ -18,15 +18,15 @@ using namespace std;
  * Return value: a string containing the data from f
  */
 string serialize_word_index(wordindex* f) {
-  string val = "";
-  for (unsigned int i = 0; i < f->indexes.size(); i++) {
-    string ind = to_string(f->indexes[i]);
-    string ind_result = to_string(ind.length()) + ":" + ind;
-    string phrase_result =
-        to_string(f->phrases[i].length()) + ":" + f->phrases[i];
-    val += ind_result + phrase_result;
-  }
-  return val;
+    string val = "";
+    for (unsigned int i = 0; i < f->indexes.size(); i++) {
+        string ind = to_string(f->indexes[i]);
+        string ind_result = to_string(ind.length()) + ":" + ind;
+        string phrase_result =
+            to_string(f->phrases[i].length()) + ":" + f->phrases[i];
+        val += ind_result + phrase_result;
+    }
+    return val;
 }
 
 /* Helper function to parse the data read from a pipe back into a wordindex
@@ -37,24 +37,24 @@ string serialize_word_index(wordindex* f) {
  * Return value: none
  */
 void deserialize_word_index(wordindex* ind, char* buffer) {
-  char* tok = NULL;
-  for (int i = 0; buffer[i] != '\0';) {
-    tok = strtok(buffer + i, ":");  // point to length of index
-    i += strlen(tok) + 1;           // i should point at index
-    int len_index = atoi(tok);
-    string phrase_ind =
-        string(buffer + i, len_index);  // copy from i to len_index
-    int newind = stoi(phrase_ind);
-    ind->indexes.push_back(newind);
-    i += len_index;
+    char* tok = NULL;
+    for (int i = 0; buffer[i] != '\0';) {
+        tok = strtok(buffer + i, ":");  // point to length of index
+        i += strlen(tok) + 1;           // i should point at index
+        int len_index = atoi(tok);
+        string phrase_ind =
+            string(buffer + i, len_index);  // copy from i to len_index
+        int newind = stoi(phrase_ind);
+        ind->indexes.push_back(newind);
+        i += len_index;
 
-    tok = strtok(buffer + i, ":");
-    len_index = atoi(tok);  // point to length of phrase
-    i += strlen(tok) + 1;   // i should point at phrasee
-    string phrase = string(buffer + i, len_index);
-    ind->phrases.push_back(phrase);
-    i += len_index;
-  }
+        tok = strtok(buffer + i, ":");
+        len_index = atoi(tok);  // point to length of phrase
+        i += strlen(tok) + 1;   // i should point at phrasee
+        string phrase = string(buffer + i, len_index);
+        ind->phrases.push_back(phrase);
+        i += len_index;
+    }
 }
 
 /*TODO
@@ -72,7 +72,17 @@ void deserialize_word_index(wordindex* ind, char* buffer) {
  *            an int* representing the pipe for this process, cpipe
  * Return value: none
  */
-void process_file(string term, string filename, int* cpipe) {}
+void process_file(string term, string filename, int* cpipe) {
+
+    wordindex file;
+    file.filename = filename;
+    find_word(&file, term);
+    string message = serialize_word_index(&file);
+    int len = message.length();
+    write(*cpipe, &len, sizeof(int));
+    write(*cpipe, message.data(), len);
+    close(*cpipe);
+}
 
 /*TODO
  * In this function, you should:
@@ -86,7 +96,16 @@ void process_file(string term, string filename, int* cpipe) {}
  *            an int* representing the pipe for this process, ppipe
  * Return value: none
  */
-void read_process_results(wordindex* ind, int* ppipe) {}
+void read_process_results(wordindex* ind, int* ppipe) {
+    int size;
+    read(*ppipe, &size, sizeof(int));
+    char *buf = new char[size+1];
+    buf[size] = '\0';
+    read(*ppipe, buf, size);
+    deserialize_word_index(ind, buf);
+    delete[] buf;
+    close(*ppipe);
+}
 
 /*TODO
  * Complete this function following the comments
@@ -100,48 +119,87 @@ void read_process_results(wordindex* ind, int* ppipe) {}
  */
 int process_input(string term, vector<string>& filenames, int** pipes,
                   int workers, int total) {
-  int pid, num_occurrences = 0;
-  vector<wordindex> fls;
-  int* pids = new int[workers];
-  int completed = 0;  // the number of files that have been processed
+    int pid, num_occurrences = 0;
+    vector<wordindex> fls;
+    int* pids = new int[workers];
+    int completed = 0;  // the number of files that have been processed
 
-  /* While the number of files that have been processed is less than the number
-   * of files that need to be processed, do the steps described below:
-   */
-  while (completed < total) {
-    // number of processes to be created in this iteration of the loop
-    int num_procs = 0;
-    if ((total - completed) > workers) {
-      num_procs = workers;
-    } else {
-      num_procs = total - completed;
+    /* While the number of files that have been processed is less than the number
+     * of files that need to be processed, do the steps described below:
+     */
+    while (completed < total) {
+        // number of processes to be created in this iteration of the loop
+        int num_procs = 0;
+        if ((total - completed) > workers) {
+            num_procs = workers;
+        } else {
+            num_procs = total - completed;
+        }
+
+        /* Create num_procs processes
+         * For each process you should do the following:
+         * 1) start a pipe for the process
+         * 2) fork into a child process which runs the process_file function
+         * 3) in the parent process, add the child's pid to the array of pids
+         */
+
+        for(int i = 0; i < num_procs; i++)
+        {
+            // Creating pipe for each child process
+            string filename = filenames[completed + i];
+            if(pipe(pipes[i]) == -1)
+            {
+                perror("pipe");
+                exit(1);
+            }
+
+            int child;
+            if((child = fork()) == 0)
+            {
+                // child process
+                close(pipes[i][0]); // close read end in the child process.
+                process_file(term, filename, &pipes[i][1]);
+                exit(0);
+            }
+            else {
+                close(pipes[i][1]); // close write end in the parent process.
+                pids[i] = child;
+            }
+        }
+
+
+        /* Read from each pipe
+         * For each processes you should do the following:
+         * 1) create a wordindex object for the process (the filename can be
+         *    set from the filenames array)
+         * 2) use the read_process_results function to fill in the data for
+         *    this file
+         * 3) add the wordindex object for this file to the fls vector and
+         * 4) update the total number of ocurrences accordingly
+         */
+
+        for(int i = 0; i < num_procs; i++)
+        {
+            wordindex file;
+            file.filename = filenames[completed + i];
+            read_process_results(&file, &pipes[i][0]);
+            fls.push_back(file);
+            num_occurrences += file.indexes.size();
+        }
+
+        // Make sure each process created in this round has completed
+        int status;
+        for(int i = 0; i < num_procs; i++)
+        {
+            waitpid(pids[i], &status, 0);
+        }
+
+        completed += num_procs;
     }
 
-    /* Create num_procs processes
-     * For each process you should do the following:
-     * 1) start a pipe for the process
-     * 2) fork into a child process which runs the process_file function
-     * 3) in the parent process, add the child's pid to the array of pids
-     */
-
-    /* Read from each pipe
-     * For each processes you should do the following:
-     * 1) create a wordindex object for the process (the filename can be
-     *    set from the filenames array)
-     * 2) use the read_process_results function to fill in the data for
-     *    this file
-     * 3) add the wordindex object for this file to the fls vector and
-     * 4) update the total number of ocurrences accordingly
-     */
-
-    // Make sure each process created in this round has completed
-
-    completed += num_procs;
-  }
-
-  delete[] pids;
-  printOccurrences(term, num_occurrences, fls);
-  return 0;
+    delete[] pids;
+    printOccurrences(term, num_occurrences, fls);
+    return 0;
 }
 
 /* The main repl for the revindex program
@@ -152,56 +210,56 @@ int process_input(string term, vector<string>& filenames, int** pipes,
  * Return value: none
  */
 void repl(char* dirname) {
-  // read dir
-  vector<string> filenames;
-  get_files(filenames, dirname);
-  int num_files = filenames.size();
-  int workers = 8;
+    // read dir
+    vector<string> filenames;
+    get_files(filenames, dirname);
+    int num_files = filenames.size();
+    int workers = 8;
 
-  // create pipes
-  int** pipes = new int*[workers];
-  for (int i = 0; i < workers; i++) {
-    pipes[i] = new int[2];
-  }
-
-  printf("Enter search term: ");
-  fflush(stdout);
-  char buf[256];
-  fgets(buf, 256, stdin);
-  fflush(stdin);
-  while (!feof(stdin)) {
-    int len = strlen(buf) - 1;
-    string term(buf, len);
-
-    if (term.length() > 0) {
-      int err = process_input(term, filenames, pipes, workers, num_files);
-      if (err < 0) {
-        printf("%s: %d\n", "ERROR", err);
-      }
+    // create pipes
+    int** pipes = new int*[workers];
+    for (int i = 0; i < workers; i++) {
+        pipes[i] = new int[2];
     }
 
-    printf("\nEnter search term: ");
+    printf("Enter search term: ");
     fflush(stdout);
-
+    char buf[256];
     fgets(buf, 256, stdin);
     fflush(stdin);
-  }
+    while (!feof(stdin)) {
+        int len = strlen(buf) - 1;
+        string term(buf, len);
 
-  for (int i = 0; i < workers; i++) {
-    delete[] pipes[i];
-  }
-  delete[] pipes;
+        if (term.length() > 0) {
+            int err = process_input(term, filenames, pipes, workers, num_files);
+            if (err < 0) {
+                printf("%s: %d\n", "ERROR", err);
+            }
+        }
+
+        printf("\nEnter search term: ");
+        fflush(stdout);
+
+        fgets(buf, 256, stdin);
+        fflush(stdin);
+    }
+
+    for (int i = 0; i < workers; i++) {
+        delete[] pipes[i];
+    }
+    delete[] pipes;
 }
 
 int main(int argc, char* argv[]) {
-  if (argc < 2) {
-    fprintf(stderr, "Expected arguments: files to search through\n");
-    exit(1);
-  }
+    if (argc < 2) {
+        fprintf(stderr, "Expected arguments: files to search through\n");
+        exit(1);
+    }
 
-  char* dirname = argv[1];
+    char* dirname = argv[1];
 
-  repl(dirname);
+    repl(dirname);
 
-  exit(0);
+    exit(0);
 }
